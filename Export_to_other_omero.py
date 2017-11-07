@@ -57,12 +57,20 @@ remote_port = 4064
 
 c = omero.client(host=remote_host, port=remote_port, args=["--Ice.Config=/dev/null"])
 c.createSession(username, password)
-remote_conn = BlitzGateway(client_obj=c)
-for p in remote_conn.getObjects("Project"):
-	print p.id, p.name
+try:
+    remote_conn = BlitzGateway(client_obj=c)
+    for p in remote_conn.getObjects("Project"):
+	    print p.id, p.name
 
+    # Transfer image over
 
-remote_conn.close()
+    # Your script, running on the OMERO server * may * be able to access the
+    # managed repository directly, and call
+    # e.g. ?bin/omero import /OMERO/ManagedRepository/will_3/2017-10/05/15-31-34.090/control.lsm
+
+finally:
+    c.closeSession()
+    remote_conn.close()
 # Return some value(s).
 
 # Here, we return anything useful the script has produced.
