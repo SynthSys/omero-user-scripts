@@ -12,6 +12,10 @@ import omero
 from omero.rtypes import rlong, rstring, unwrap
 from omero.gateway import BlitzGateway
 import omero.scripts as scripts
+import omero.fs
+from path import path
+import sys
+import subprocess
 
 # Script definition
 
@@ -62,15 +66,56 @@ try:
     for p in remote_conn.getObjects("Project"):
 	    print p.id, p.name
 
+
     # Transfer image over
+    key = c.getSessionId()
 
-    # Your script, running on the OMERO server * may * be able to access the
-    # managed repository directly, and call
-    # e.g. ?bin/omero import /OMERO/ManagedRepository/will_3/2017-10/05/15-31-34.090/control.lsm
+    args = [sys.executable]
+    args.append(str(path(".") / "bin" / "omero"))
+    args.extend(
+        ["-s", remote_host, "-k", key, "-p", str(remote_port), "import"])
 
+    # TODO Find location of ManagedRepository
+    #TODO get selected file from user choice
+
+    file_loc = "/Users/eilidhtroup/omero/ManagedRepository/root_0/2017-10/06/" \
+               "16-21-46.945/antibiotic_plate.jpg"
+    # file_loc = "root_0/2017-10/06/" \
+    #            "16-21-46.945/antibiotic_plate.jpg"
+    args.append(file_loc)
+
+    print "args are"
+    print args
+
+    # TODO could get omero_dist as done in def omerodistdir(cls):
+    # from https://github.com/openmicroscopy/openmicroscopy/blob/develop/components/tools/OmeroPy/src/omero/testlib/__init__.py#L277
+    popen = subprocess.Popen(args,  # cwd=str(self.omero_dist),
+                             cwd="/Users/eilidhtroup/Documents/SynthSysDataManagement/omero/omeroServer/OMERO.server",
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+    out, err = popen.communicate()
+    rc = popen.wait()
+    if rc != 0:
+        raise Exception("import failed: [%r] %s\n%s" % (args, rc, err))
+    pix_ids = []
+    print "Output"
+    for x in out.split("\n"):
+        print x
+        if x and x.find("Created") < 0 and x.find("#") < 0:
+            try:  # if the line has an image ID...
+                image_id = str(long(x.strip()))
+                # Occasionally during tests an id is duplicated on stdout
+                if image_id not in pix_ids:
+                    pix_ids.append(image_id)
+            except:
+                pass
+
+    print "pix_ids"
+    print pix_ids
+    # End of transferring image
 finally:
     c.closeSession()
-    remote_conn.close()
+   # remote_conn.close()
 # Return some value(s).
 
 # Here, we return anything useful the script has produced.
