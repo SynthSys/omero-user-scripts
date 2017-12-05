@@ -19,6 +19,8 @@ from omero.gateway import BlitzGateway
 
 REMOTE_HOST = 'demo.openmicroscopy.org'
 REMOTE_PORT = 4064
+# TODO Find location of ManagedRepository
+MANAGED_REPO = "/Users/eilidhtroup/omero/ManagedRepository/"
 
 # Script definition
 
@@ -48,18 +50,13 @@ local_conn = BlitzGateway(client_obj=client)
 
 # get the 'IDs' parameter (which we have restricted to 'Image' IDs)
 ids = unwrap(client.getInput("IDs"))
-image_id = ids[0]        # simply use the first ID for this example
+
 username = client.getInput("username", unwrap=True)
 password = client.getInput("password", unwrap=True)
 
-# Find image files
-image = local_conn.getObject("Image", image_id)
-print image.getName()
-for f in image.getImportedImageFiles():
-   print f.path,f.name
-
 # Connect to remote omero
-c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT, args=["--Ice.Config=/dev/null"])
+c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
+                 args=["--Ice.Config=/dev/null", "--omero.debug=1"])
 c.createSession(username, password)
 try:
     # Just to test connection, print the projects.
@@ -73,13 +70,28 @@ try:
     cli.set_client(c)
     del os.environ["ICE_CONFIG"]
 
-    # TODO Find location of ManagedRepository
-    #TODO get selected file from user choice
-    file_loc = "/Users/eilidhtroup/omero/ManagedRepository/root_0/2017-10/06/" \
-               "16-21-46.945/antibiotic_plate.jpg"
-    cli.invoke(["import", file_loc])
+    # Find image files
+    #TODO make it work for multiple images
+    image_id = ids[0]        # simply use the first ID for this example
+    image = local_conn.getObject("Image", image_id)
+    print image.getName()
+    try:
+        for f in image.getImportedImageFiles():
+            file_loc = '{}{}{}'.format(MANAGED_REPO, f.path, f.name)
+            print "file location is: ", file_loc
+            response = cli.invoke(["import", file_loc])
+            print "response: ", response
+            # TODO Get response to see if successful.
+    # See this for how to scrape image id from file:
+    # https://github.com/openmicroscopy/openmicroscopy/blob/develop/components/
+    # tools/OmeroPy/src/omero/testlib/__init__.py#L277
+    except Exception as inst:
+        # TODO get id of newly created file and handle errors.
+        print type(inst)  # the exception instance
+        print inst.args  # arguments stored in .args
+        print inst
 
-    # End of transferring image
+        # End of transferring image
 finally:
     remote_conn.close()
     c.closeSession()
