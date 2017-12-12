@@ -15,12 +15,10 @@ import os
 import omero.cli
 import omero.scripts as scripts
 from omero.gateway import BlitzGateway
-
+import sys
 
 REMOTE_HOST = 'demo.openmicroscopy.org'
 REMOTE_PORT = 4064
-# TODO Find location of ManagedRepository
-MANAGED_REPO = "/Users/eilidhtroup/omero/ManagedRepository/"
 
 # Script definition
 
@@ -53,6 +51,8 @@ ids = unwrap(client.getInput("IDs"))
 
 username = client.getInput("username", unwrap=True)
 password = client.getInput("password", unwrap=True)
+# The managed_dir is where the local images are stored.
+managed_dir = client.sf.getConfigService().getConfigValue("omero.managed.dir")
 
 # Connect to remote omero
 c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
@@ -77,7 +77,7 @@ try:
     print image.getName()
     try:
         for f in image.getImportedImageFiles():
-            file_loc = '{}{}{}'.format(MANAGED_REPO, f.path, f.name)
+            file_loc = os.path.join(managed_dir, f.path, f.name)
             print "file location is: ", file_loc
             response = cli.invoke(["import", file_loc])
             print "response: ", response
