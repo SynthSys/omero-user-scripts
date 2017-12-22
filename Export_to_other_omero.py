@@ -16,9 +16,57 @@ import omero.cli
 import omero.scripts as scripts
 from omero.gateway import BlitzGateway
 import sys
+from tempfile import NamedTemporaryFile
+from contextlib import contextmanager
+import re
+
+# old_stdout = sys.stdout
+# temp_file = NamedTemporaryFile(delete=False)
+# sys.stdout = temp_file
 
 REMOTE_HOST = 'demo.openmicroscopy.org'
 REMOTE_PORT = 4064
+
+# A couple of helper methods for capturing sys.stdout
+#
+
+# From stackoverflow https://stackoverflow.com/questions/4675728/redirect-stdout
+# -to-a-file-in-python/22434262#22434262
+
+def fileno(file_or_fd):
+    print "file_or_fd is: ", file_or_fd
+    # file_or_fd.fileno()
+    fd = getattr(file_or_fd, 'fileno', lambda: file_or_fd)()
+    if not isinstance(fd, int):
+        raise ValueError("Expected a file (`.fileno()`) or a file descriptor")
+    return fd
+
+@contextmanager
+def stdout_redirected(to=os.devnull, stdout=None):
+    if stdout is None:
+       stdout = sys.stdout
+
+    stdout_fd = fileno(stdout)
+    print "stdout_fd is: ", stdout_fd
+    # copy stdout_fd before it is overwritten
+    #NOTE: `copied` is inheritable on Windows when duplicating a standard stream
+    with os.fdopen(os.dup(stdout_fd), 'wb') as copied:
+        stdout.flush()  # flush library buffers that dup2 knows nothing about
+        try:
+            os.dup2(fileno(to), stdout_fd)  # $ exec >&to
+        except ValueError:  # filename
+            with open(to, 'wb') as to_file:
+                os.dup2(to_file.fileno(), stdout_fd)  # $ exec > to
+        try:
+            yield stdout # allow code to be run with the redirected stdout
+        finally:
+            # restore stdout to its previous value
+            #NOTE: dup2 makes stdout_fd inheritable unconditionally
+            stdout.flush()
+            os.dup2(copied.fileno(), stdout_fd)  # $ exec >&copied
+
+# End helper methods for capturing sys.stdout
+
 
 # Script definition
 
@@ -74,13 +122,26 @@ try:
     #TODO make it work for multiple images
     image_id = ids[0]        # simply use the first ID for this example
     image = local_conn.getObject("Image", image_id)
+    uploaded_image_ids = []
     print image.getName()
     try:
         for f in image.getImportedImageFiles():
             file_loc = os.path.join(managed_dir, f.path, f.name)
             print "file location is: ", file_loc
-            response = cli.invoke(["import", file_loc])
-            print "response: ", response
+            # TODO this isn't efficient. Try creating outside loop and appending
+            # to the temp file, then reading all ids at once
+            temp_file = NamedTemporaryFile().name
+            with open(temp_file, 'wr') as f, stdout_redirected(f):
+                cli.invoke(["import", file_loc])
+            # with open(temp_file, 'r') as f:
+                # TODO was writing this when I left for christmas. Check it.
+                txt = f.readline()
+                print "text is ", txt
+                assert txt.startswith("Image:")
+                remote_image_id  = re.find(r'\d+', remote_image_id)
+                uploaded_image_ids.append(remote_image_id)
+                print "id is: ", remote_image_id
+
             # TODO Get response to see if successful.
     # See this for how to scrape image id from file:
     # https://github.com/openmicroscopy/openmicroscopy/blob/develop/components/
@@ -90,11 +151,16 @@ try:
         print type(inst)  # the exception instance
         print inst.args  # arguments stored in .args
         print inst
+    finally:
+        pass
 
+    print "uploaded image ids: ", uploaded_image_ids
         # End of transferring image
 finally:
+    print
     remote_conn.close()
     c.closeSession()
+
 
 # Return some value(s).
 
