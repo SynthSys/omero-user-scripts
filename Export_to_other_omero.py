@@ -119,40 +119,39 @@ try:
     del os.environ["ICE_CONFIG"]
 
     # Find image files
-    #TODO make it work for multiple images
-    image_id = ids[0]        # simply use the first ID for this example
-    image = local_conn.getObject("Image", image_id)
     uploaded_image_ids = []
-    print image.getName()
-    try:
-        for f in image.getImportedImageFiles():
-            file_loc = os.path.join(managed_dir, f.path, f.name)
-            print "file location is: ", file_loc
-            # TODO this isn't efficient. Try creating outside loop and appending
-            # to the temp file, then reading all ids at once
-            temp_file = NamedTemporaryFile().name
-            with open(temp_file, 'wr') as f, stdout_redirected(f):
-                cli.invoke(["import", file_loc])
-            # with open(temp_file, 'r') as f:
-                # TODO was writing this when I left for christmas. Check it.
-                txt = f.readline()
-                print "text is ", txt
-                assert txt.startswith("Image:")
-                remote_image_id  = re.find(r'\d+', remote_image_id)
-                uploaded_image_ids.append(remote_image_id)
-                print "id is: ", remote_image_id
+    for image_id in ids:
+        image = local_conn.getObject("Image", image_id)
+        print image.getName()
 
-            # TODO Get response to see if successful.
-    # See this for how to scrape image id from file:
-    # https://github.com/openmicroscopy/openmicroscopy/blob/develop/components/
-    # tools/OmeroPy/src/omero/testlib/__init__.py#L277
-    except Exception as inst:
-        # TODO get id of newly created file and handle errors.
-        print type(inst)  # the exception instance
-        print inst.args  # arguments stored in .args
-        print inst
-    finally:
-        pass
+        # TODO this isn't efficient. Try creating outside loop and appending
+        # to the temp file, then reading all ids at once
+        temp_file = NamedTemporaryFile().name
+        try:
+            # TODO haven't tested an image with multiple files.
+            for f in image.getImportedImageFiles():
+                file_loc = os.path.join(managed_dir, f.path, f.name)
+                print "file location is: ", file_loc
+                with open(temp_file, 'wr') as f, stdout_redirected(f):
+                    cli.invoke(["import", file_loc])
+
+                with open(temp_file, 'r') as f:
+                    txt = f.readline()
+                    print "text is ", txt
+                    assert txt.startswith("Image:")
+                    uploaded_image_ids.append(re.findall(r'\d+', txt)[0])
+
+            print "ids are: ", uploaded_image_ids
+        # See this for how to scrape image id from file:
+        # https://github.com/openmicroscopy/openmicroscopy/blob/develop/components/
+        # tools/OmeroPy/src/omero/testlib/__init__.py#L277
+        except Exception as inst:
+            # TODO handle errors.
+            print type(inst)  # the exception instance
+            print inst.args  # arguments stored in .args
+            print inst
+        finally:
+            pass
 
     print "uploaded image ids: ", uploaded_image_ids
         # End of transferring image
