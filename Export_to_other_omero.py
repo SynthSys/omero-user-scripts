@@ -19,6 +19,7 @@ import sys
 from tempfile import NamedTemporaryFile
 from contextlib import contextmanager
 import re
+import keyring
 
 # old_stdout = sys.stdout
 # temp_file = NamedTemporaryFile(delete=False)
@@ -87,9 +88,9 @@ client = scripts.client(
     # second parameter
     scripts.List("IDs", optional=False, grouping="1.2").ofType(rlong(0)),
     # username
-    scripts.String("username", optional=False, grouping="2.1"),
+    scripts.String("username", optional=False, grouping="2.1")#,
     # password
-    scripts.String("password", optional=False, grouping="2.2")
+    # scripts.String("password", optional=False, grouping="2.2")
 )
 # we can now create our local Blitz Gateway by wrapping the client object
 local_conn = BlitzGateway(client_obj=client)
@@ -98,7 +99,8 @@ local_conn = BlitzGateway(client_obj=client)
 ids = unwrap(client.getInput("IDs"))
 
 username = client.getInput("username", unwrap=True)
-password = client.getInput("password", unwrap=True)
+#password = client.getInput("password", unwrap=True)
+password = keyring.get_password("omero", username)
 # The managed_dir is where the local images are stored.
 managed_dir = client.sf.getConfigService().getConfigValue("omero.managed.dir")
 
@@ -124,8 +126,6 @@ try:
         image = local_conn.getObject("Image", image_id)
         print image.getName()
 
-        # TODO this isn't efficient. Try creating outside loop and appending
-        # to the temp file, then reading all ids at once
         temp_file = NamedTemporaryFile().name
         try:
             # TODO haven't tested an image with multiple files.
