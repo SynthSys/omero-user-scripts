@@ -14,6 +14,7 @@ from path import path
 import os
 import omero.cli
 import omero.scripts as scripts
+import omero.util.script_utils as script_utils
 from omero.gateway import BlitzGateway
 import sys
 from tempfile import NamedTemporaryFile
@@ -67,59 +68,95 @@ def stdout_redirected(to=os.devnull, stdout=None):
             os.dup2(copied.fileno(), stdout_fd)  # $ exec >&copied
 
 # End helper methods for capturing sys.stdout
+def run_script():
+    # Script definition
+    # Script name, description and 2 parameters are defined here.
+    # These parameters will be recognised by the Insight and web clients and
+    # populated with the currently selected Image(s)
+    # A username and password will be entered too.
+    # this script takes Images or Datasets
+    data_types = [rstring('Dataset'), rstring('Image')]
+    client = scripts.client(
+        "Export_to_other_omero.py",
+        ("Script to export a file to another omero server."),
+        scripts.String(
+            "Data_Type", optional=False, values=data_types, default="Image",
+            description="The data you want to work with.", grouping="1.1"),
+        scripts.List("IDs", optional=False, grouping="1.2",
+                     description="List of Dataset IDs or Image IDs").ofType(
+            rlong(0)),
+        # username
+        scripts.String("username", optional=False, grouping="2.1")  # ,
+        # password
+        # scripts.String("password", optional=False, grouping="2.2")
+    )
+    try:
+        # we can now create our local Blitz Gateway by wrapping the client object
+        local_conn = BlitzGateway(client_obj=client)
+        script_params = client.getInputs(unwrap=True)
+
+        uploaded_image_ids = copy_to_remote_omero(client, local_conn,
+                                                  script_params)
+    finally:
+        message = "uploaded image ids: ", uploaded_image_ids
+        client.setOutput("Message", rstring(message))
+
+    # Return some value(s).
+    # Here, we return anything useful the script has produced.
+    # NB: The Insight and web clients will display the "Message" output.
+    # msg = "Script ran with Image ID: %s, Name: %s and \nUsername: %s"\
+    #       % (image_id, image.getName(), username)
+    # client.setOutput("Message", rstring(msg))
+        client.closeSession()
 
 
-# Script definition
-
-# Script name, description and 2 parameters are defined here.
-# These parameters will be recognised by the Insight and web clients and
-# populated with the currently selected Image(s)
-# A username and password will be entered too.
-
-# this script only takes Images (not Datasets etc.)
-data_types = [rstring('Image')]
-client = scripts.client(
-    "Export_to_other_omero.py",
-    ("Script to export a file to another omero server."),
-    # first parameter
-    scripts.String(
-        "Data_Type", optional=False, values=data_types, default="Image",
-        grouping="1.1"),
-    # second parameter
-    scripts.List("IDs", optional=False, grouping="1.2").ofType(rlong(0)),
-    # username
-    scripts.String("username", optional=False, grouping="2.1")#,
-    # password
-    # scripts.String("password", optional=False, grouping="2.2")
-)
-# we can now create our local Blitz Gateway by wrapping the client object
-local_conn = BlitzGateway(client_obj=client)
-
-# get the 'IDs' parameter (which we have restricted to 'Image' IDs)
-ids = unwrap(client.getInput("IDs"))
-
-username = client.getInput("username", unwrap=True)
-#password = client.getInput("password", unwrap=True)
-password = keyring.get_password("omero", username)
-# The managed_dir is where the local images are stored.
-managed_dir = client.sf.getConfigService().getConfigValue("omero.managed.dir")
-
-# Connect to remote omero
-c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
-                 args=["--Ice.Config=/dev/null", "--omero.debug=1"])
-c.createSession(username, password)
-try:
+def copy_to_remote_omero(client, local_conn, script_params):
+    #TODO could maybe refactor to remove client
+    #TODO definately refactor to return message instead of image ids.
+    data_type = script_params["Data_Type"]
+    # get the 'IDs' parameter (which we have restricted to 'Image' IDs)
+    ids = unwrap(client.getInput("IDs"))
+    username = client.getInput("username", unwrap=True)
+    # password = client.getInput("password", unwrap=True)
+    password = keyring.get_password("omero", username)
+    # The managed_dir is where the local images are stored.
+    managed_dir = client.sf.getConfigService().getConfigValue(
+        "omero.managed.dir")
+    # # Get the images or datasets
+    # message = ""
+    # objects, log_message = script_utils.get_objects(conn, script_params)
+    # message += log_message
+    # if not objects:
+    #     pass
+    #     # return None, message
+    #
+    # # Attach figure to the first image
+    # parent = objects[0]
+    #
+    # if data_type == 'Dataset':
+    #     images = []
+    #     for ds in objects:
+    #         images.extend(list(ds.listChildren()))
+    #     if not images:
+    #         message += "No image found in dataset(s)"
+    #         # return None, message
+    # else:
+    #     images = objects
+    #
+    # print("Processing %s images" % len(images))
+    # Connect to remote omero
+    c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
+                     args=["--Ice.Config=/dev/null", "--omero.debug=1"])
+    c.createSession(username, password)
     # Just to test connection, print the projects.
     remote_conn = BlitzGateway(client_obj=c)
     for p in remote_conn.getObjects("Project"):
-	    print p.id, p.name
-
+        print p.id, p.name
     print "Connected to ", REMOTE_HOST, ", now to transfer image"
     cli = omero.cli.CLI()
     cli.loadplugins()
     cli.set_client(c)
     del os.environ["ICE_CONFIG"]
-
     # Find image files
     uploaded_image_ids = []
     for image_id in ids:
@@ -153,21 +190,13 @@ try:
         finally:
             pass
 
-    print "uploaded image ids: ", uploaded_image_ids
-        # End of transferring image
-finally:
-    print
+    # TODO wrap in try finally
     remote_conn.close()
     c.closeSession()
+    print "uploaded image ids: ", uploaded_image_ids
+    # End of transferring image
+    return uploaded_image_ids
 
 
-# Return some value(s).
-
-# Here, we return anything useful the script has produced.
-# NB: The Insight and web clients will display the "Message" output.
-
-# msg = "Script ran with Image ID: %s, Name: %s and \nUsername: %s"\
-#       % (image_id, image.getName(), username)
-# client.setOutput("Message", rstring(msg))
-
-client.closeSession()
+if __name__ == "__main__":
+    run_script()
