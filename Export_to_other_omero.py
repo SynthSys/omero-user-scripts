@@ -75,6 +75,7 @@ def run_script():
     # populated with the currently selected Image(s)
     # A username and password will be entered too.
     # this script takes Images or Datasets
+    message = ""
     data_types = [rstring('Dataset'), rstring('Image')]
     client = scripts.client(
         "Export_to_other_omero.py",
@@ -87,7 +88,7 @@ def run_script():
             rlong(0)),
         # username
         scripts.String("username", optional=False, grouping="2.1")  # ,
-        # password
+        # password - getting from keyring, just for testing.
         # scripts.String("password", optional=False, grouping="2.2")
     )
     try:
@@ -95,10 +96,9 @@ def run_script():
         local_conn = BlitzGateway(client_obj=client)
         script_params = client.getInputs(unwrap=True)
 
-        uploaded_image_ids = copy_to_remote_omero(client, local_conn,
+        message = copy_to_remote_omero(client, local_conn,
                                                   script_params)
     finally:
-        message = "uploaded image ids: ", uploaded_image_ids
         client.setOutput("Message", rstring(message))
 
     # Return some value(s).
@@ -112,38 +112,35 @@ def run_script():
 
 def copy_to_remote_omero(client, local_conn, script_params):
     #TODO could maybe refactor to remove client
-    #TODO definately refactor to return message instead of image ids.
     data_type = script_params["Data_Type"]
-    # get the 'IDs' parameter (which we have restricted to 'Image' IDs)
-    ids = unwrap(client.getInput("IDs"))
-    username = client.getInput("username", unwrap=True)
+    username = script_params["username"]
     # password = client.getInput("password", unwrap=True)
     password = keyring.get_password("omero", username)
-    # The managed_dir is where the local images are stored.
+    # The managed_dir is where the local images are stored. #TODO could pass this in instead of client?
     managed_dir = client.sf.getConfigService().getConfigValue(
         "omero.managed.dir")
     # # Get the images or datasets
-    # message = ""
-    # objects, log_message = script_utils.get_objects(conn, script_params)
-    # message += log_message
-    # if not objects:
-    #     pass
-    #     # return None, message
-    #
-    # # Attach figure to the first image
-    # parent = objects[0]
-    #
-    # if data_type == 'Dataset':
-    #     images = []
-    #     for ds in objects:
-    #         images.extend(list(ds.listChildren()))
-    #     if not images:
-    #         message += "No image found in dataset(s)"
-    #         # return None, message
-    # else:
-    #     images = objects
-    #
-    # print("Processing %s images" % len(images))
+    message = ""
+    objects, log_message = script_utils.get_objects(local_conn, script_params)
+    message += log_message
+    if not objects:
+        return message
+
+    # Attach figure to the first image
+    parent = objects[0]
+
+    if data_type == 'Dataset':
+        images = []
+        for ds in objects:
+            images.extend(list(ds.listChildren()))
+        if not images:
+            message += "No image found in dataset(s)"
+            return message
+    else:
+        images = objects
+
+    print("Processing %s images" % len(images))
+
     # Connect to remote omero
     c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
                      args=["--Ice.Config=/dev/null", "--omero.debug=1"])
@@ -159,8 +156,13 @@ def copy_to_remote_omero(client, local_conn, script_params):
     del os.environ["ICE_CONFIG"]
     # Find image files
     uploaded_image_ids = []
-    for image_id in ids:
-        image = local_conn.getObject("Image", image_id)
+
+    # TODO this next
+    for image in images:
+        print("Processing image: ID %s: %s" % (image.id, image.getName()))
+
+    # for image_id in ids:
+    #     image = local_conn.getObject("Image", image_id)
         print image.getName()
 
         temp_file = NamedTemporaryFile().name
@@ -193,9 +195,11 @@ def copy_to_remote_omero(client, local_conn, script_params):
     # TODO wrap in try finally
     remote_conn.close()
     c.closeSession()
-    print "uploaded image ids: ", uploaded_image_ids
     # End of transferring image
-    return uploaded_image_ids
+
+    message = "uploaded image ids: ", uploaded_image_ids
+    print message
+    return message
 
 
 if __name__ == "__main__":
