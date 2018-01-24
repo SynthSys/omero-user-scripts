@@ -154,6 +154,8 @@ def copy_to_remote_omero(client, local_conn, script_params):
     cli.loadplugins()
     cli.set_client(c)
     del os.environ["ICE_CONFIG"]
+    # TODO sort out opening and closing sessions
+    c.closeSession()
     # Find image files
     uploaded_image_ids = []
 
@@ -171,6 +173,10 @@ def copy_to_remote_omero(client, local_conn, script_params):
             for f in image.getImportedImageFiles():
                 file_loc = os.path.join(managed_dir, f.path, f.name)
                 print "file location is: ", file_loc
+                print "cli is: ", cli
+                #TODO bit hacky, also check everything closed again.
+                c.createSession(username, password)
+                cli.set_client(c)
                 with open(temp_file, 'wr') as f, stdout_redirected(f):
                     cli.invoke(["import", file_loc])
 
