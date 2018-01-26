@@ -145,6 +145,8 @@ def copy_to_remote_omero(client, local_conn, script_params):
     c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
                      args=["--Ice.Config=/dev/null", "--omero.debug=1"])
     c.createSession(username, password)
+    cli = omero.cli.CLI()
+
     # Just to test connection, print the projects.
     remote_conn = BlitzGateway(client_obj=c)
     for p in remote_conn.getObjects("Project"):
@@ -154,49 +156,47 @@ def copy_to_remote_omero(client, local_conn, script_params):
     cli.loadplugins()
     cli.set_client(c)
     del os.environ["ICE_CONFIG"]
-    # TODO sort out opening and closing sessions
-    c.closeSession()
     # Find image files
     uploaded_image_ids = []
 
-    # TODO this next
-    for image in images:
-        print("Processing image: ID %s: %s" % (image.id, image.getName()))
+    try:
+        for image in images:
+            print("Processing image: ID %s: %s" % (image.id, image.getName()))
 
-    # for image_id in ids:
-    #     image = local_conn.getObject("Image", image_id)
-        print image.getName()
+            # for image_id in ids:
+            #     image = local_conn.getObject("Image", image_id)
+            print image.getName()
 
-        temp_file = NamedTemporaryFile().name
-        try:
-            # TODO haven't tested an image with multiple files.
-            for f in image.getImportedImageFiles():
-                file_loc = os.path.join(managed_dir, f.path, f.name)
-                print "file location is: ", file_loc
-                print "cli is: ", cli
-                #TODO bit hacky, also check everything closed again.
-                c.createSession(username, password)
-                cli.set_client(c)
-                with open(temp_file, 'wr') as f, stdout_redirected(f):
-                    cli.invoke(["import", file_loc])
+            temp_file = NamedTemporaryFile().name
+            try:
+                # TODO haven't tested an image with multiple files.
+                for f in image.getImportedImageFiles():
+                    file_loc = os.path.join(managed_dir, f.path, f.name)
+                    print "file location is: ", file_loc
+                    with open(temp_file, 'wr') as f, stdout_redirected(f):
+                        cli.onecmd(["import", file_loc])
+                        cli.onecmd(["import", file_loc])
 
-                with open(temp_file, 'r') as f:
-                    txt = f.readline()
-                    print "text is ", txt
-                    assert txt.startswith("Image:")
-                    uploaded_image_ids.append(re.findall(r'\d+', txt)[0])
+                    with open(temp_file, 'r') as f:
+                        txt = f.readline()
+                        print "text is ", txt
+                        assert txt.startswith("Image:")
+                        uploaded_image_ids.append(re.findall(r'\d+', txt)[0])
 
-            print "ids are: ", uploaded_image_ids
-        # See this for how to scrape image id from file:
-        # https://github.com/openmicroscopy/openmicroscopy/blob/develop/components/
-        # tools/OmeroPy/src/omero/testlib/__init__.py#L277
-        except Exception as inst:
-            # TODO handle errors.
-            print type(inst)  # the exception instance
-            print inst.args  # arguments stored in .args
-            print inst
-        finally:
-            pass
+                print "ids are: ", uploaded_image_ids
+            # See this for how to scrape image id from file:
+            # https://github.com/openmicroscopy/openmicroscopy/blob/develop/components/
+            # tools/OmeroPy/src/omero/testlib/__init__.py#L277
+            except Exception as inst:
+                # TODO handle errors.
+                print type(inst)  # the exception instance
+                print inst.args  # arguments stored in .args
+                print inst
+            finally:
+                pass
+
+    finally:
+        cli.close()
 
     # TODO wrap in try finally
     remote_conn.close()
