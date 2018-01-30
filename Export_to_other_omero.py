@@ -126,12 +126,13 @@ def copy_to_remote_omero(client, local_conn, script_params):
     if not objects:
         return message
 
-    # Attach figure to the first image
-    parent = objects[0]
-
+    dataset_name = ''
     if data_type == 'Dataset':
         images = []
+        # Refactor to do all of this for each dataset - for now, works for
+        # one dataset.
         for ds in objects:
+            dataset_name = ds.getName()
             images.extend(list(ds.listChildren()))
         if not images:
             message += "No image found in dataset(s)"
@@ -158,6 +159,9 @@ def copy_to_remote_omero(client, local_conn, script_params):
     del os.environ["ICE_CONFIG"]
     # Find image files
     uploaded_image_ids = []
+    target_flag = "-T"
+    target_dataset = "Dataset:name:" + dataset_name
+    # dataset = "test_dataset"
 
     try:
         for image in images:
@@ -169,18 +173,18 @@ def copy_to_remote_omero(client, local_conn, script_params):
 
             temp_file = NamedTemporaryFile().name
             try:
-                # TODO haven't tested an image with multiple files.
+                # TODO haven't tested an image with multiple files -see fileset.
                 for f in image.getImportedImageFiles():
                     file_loc = os.path.join(managed_dir, f.path, f.name)
                     print "file location is: ", file_loc
                     with open(temp_file, 'wr') as f, stdout_redirected(f):
-                        cli.onecmd(["import", file_loc])
-                        cli.onecmd(["import", file_loc])
+                        # TODO assumes dataset, not just image
+                        cli.onecmd(["import", file_loc, target_flag, target_dataset])
 
                     with open(temp_file, 'r') as f:
                         txt = f.readline()
                         print "text is ", txt
-                        assert txt.startswith("Image:")
+                       # assert txt.startswith("Image:")
                         uploaded_image_ids.append(re.findall(r'\d+', txt)[0])
 
                 print "ids are: ", uploaded_image_ids
@@ -203,7 +207,7 @@ def copy_to_remote_omero(client, local_conn, script_params):
     c.closeSession()
     # End of transferring image
 
-    message = "uploaded image ids: ", uploaded_image_ids
+    message += "uploaded image ids: ", uploaded_image_ids
     print message
     return message
 
