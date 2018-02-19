@@ -108,6 +108,7 @@ def run_script():
     #       % (image_id, image.getName(), username)
     # client.setOutput("Message", rstring(msg))
         client.closeSession()
+        local_conn.close()
 
 
 def copy_to_remote_omero(client, local_conn, script_params):
@@ -129,7 +130,7 @@ def copy_to_remote_omero(client, local_conn, script_params):
 
     try:
         # Connect to remote omero
-        c, cli = connect_to_remote(password, username)
+        c, cli, remote_conn = connect_to_remote(password, username)
 
         target_dataset = None
         uploaded_image_ids = []
@@ -145,8 +146,9 @@ def copy_to_remote_omero(client, local_conn, script_params):
                 print("Processing {} images, in dataset {}".format(
                     len(images), dataset_name))
                 for image in images:
-                    uploaded_image_ids += upload_image(cli, image, managed_dir,
-                                                       target_dataset)
+                    image_ids = upload_image(cli, image, managed_dir,
+                                             target_dataset, remote_conn)
+                    uploaded_image_ids += image_ids
             if not images:
                 message += "No image found in dataset(s)"
                 return message
@@ -155,10 +157,9 @@ def copy_to_remote_omero(client, local_conn, script_params):
             print("Processing %s images" % len(images))
             for image in images:
                 uploaded_image_ids += upload_image(cli, image, managed_dir,
-                                                   target_dataset)
+                                                   target_dataset, remote_conn)
     finally:
-        c.closeSession()
-        cli.close()
+        close_remote_connection(c, cli, remote_conn)
     # End of transferring images
 
     message += "uploaded image ids: " + str(tuple(uploaded_image_ids))
@@ -170,19 +171,21 @@ def connect_to_remote(password, username):
     c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
                      args=["--Ice.Config=/dev/null", "--omero.debug=1"])
     c.createSession(username, password)
-    # # Just to test connection, print the projects.
-    # remote_conn = BlitzGateway(client_obj=c)
-    # for p in remote_conn.getObjects("Project"):
-    #     print p.id, p.name
-    # print "Connected to ", REMOTE_HOST, ", now to transfer image"
+    remote_conn = BlitzGateway(client_obj=c)
     cli = omero.cli.CLI()
     cli.loadplugins()
     cli.set_client(c)
     del os.environ["ICE_CONFIG"]
-    return c, cli
+    return c, cli, remote_conn
 
 
-def upload_image(cli, image, managed_dir, target_dataset):
+def close_remote_connection(c, cli, remote_conn):
+    remote_conn.close()
+    c.closeSession()
+    cli.close()
+
+
+def upload_image(cli, image, managed_dir, target_dataset,remote_conn):
 
     print("Processing image: ID %s: %s" % (image.id, image.getName()))
     uploaded_image_ids = []
@@ -204,8 +207,50 @@ def upload_image(cli, image, managed_dir, target_dataset):
             # assert txt.startswith("Image:")
             uploaded_image_ids.append(re.findall(r'\d+', txt)[0])
 
+    # TODO check what happens when an image has multiple files.
+    add_attachments(image, uploaded_image_ids[0], remote_conn)
+
     print "ids are: ", uploaded_image_ids
     return uploaded_image_ids
+
+
+def add_attachments(local_image, remote_image_id, remote_conn):
+    remote_image = remote_conn.getObject("Image", remote_image_id)
+    for ann in local_image.listAnnotations():
+        if ann.OMERO_TYPE == omero.model.TagAnnotationI:
+            # Nothing to do here, tags are automatically uploaded.
+            pass
+        else:  # not a tag, add to image
+            if ann.OMERO_TYPE == omero.model.CommentAnnotationI:
+                remote_ann = omero.gateway.CommentAnnotationWrapper(remote_conn)
+                remote_ann.setValue(ann.getTextValue())
+            elif ann.OMERO_TYPE == omero.model.LongAnnotationI:  # rating
+                remote_ann = omero.gateway.LongAnnotationWrapper(remote_conn)
+                remote_ann.setNs(ann.getNs())
+                remote_ann.setValue(ann.getValue())
+            elif ann.OMERO_TYPE == omero.model.MapAnnotationI:
+                remote_ann = omero.gateway.MapAnnotationWrapper(remote_conn)
+                remote_ann.setNs(ann.getNs())
+                remote_ann.setValue(ann.getValue())
+            elif ann.OMERO_TYPE == omero.model.FileAnnotationI:
+                file_to_upload = ann.getFile()
+                file_path = os.path.join(file_to_upload.getPath(),
+                                         file_to_upload.getName())
+                mime = file_to_upload.getMimetype()
+                namespace = ann.getNs()
+                description = ann.getDescription()
+                remote_ann = remote_conn.createFileAnnfromLocalFile(
+                    file_path, mimetype=mime, ns=namespace, desc=description)
+                print "Attaching FileAnnotation to Image: ", "File ID:",\
+                    remote_ann.getId(),  ",", remote_ann.getFile().getName(), \
+                    "Size:", remote_ann.getFile().getSize()
+            else:
+                remote_ann = omero.gateway.CommentAnnotationWrapper(remote_conn)
+                comment = 'Annotation of type: {} could not be uploaded.'.\
+                    format(ann.OMERO_TYPE)
+                remote_ann.setValue(comment)
+            remote_ann.save()
+            remote_image.linkAnnotation(remote_ann)
 
 
 if __name__ == "__main__":
