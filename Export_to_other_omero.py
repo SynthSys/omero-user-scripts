@@ -28,7 +28,6 @@ import keyring
 
 REMOTE_HOST = 'demo.openmicroscopy.org'
 REMOTE_PORT = 4064
-TARGET_FLAG = '-T'
 
 # A couple of helper methods for capturing sys.stdout
 #
@@ -132,32 +131,32 @@ def copy_to_remote_omero(client, local_conn, script_params):
         # Connect to remote omero
         c, cli, remote_conn = connect_to_remote(password, username)
 
-        target_dataset = None
-        uploaded_image_ids = []
-
+        images = []
         if data_type == 'Dataset':
-            images = []
-            # Refactor to do all of this for each dataset - for now, works for
-            # one dataset.
+            # TODO handle multiple datasets
             for ds in objects:
                 dataset_name = ds.getName()
                 target_dataset = "Dataset:name:" + dataset_name
+                # create new remote dataset
+                remote_ds = upload_dataset(cli, ds, remote_conn)
+
                 images.extend(list(ds.listChildren()))
+                if not images:
+                    message += "No image found in dataset {}".format(
+                        dataset_name)
+                    return message
+
                 print("Processing {} images, in dataset {}".format(
                     len(images), dataset_name))
-                for image in images:
-                    image_ids = upload_image(cli, image, managed_dir,
-                                             target_dataset, remote_conn)
-                    uploaded_image_ids += image_ids
-            if not images:
-                message += "No image found in dataset(s)"
-                return message
+                # TODO use remote_ds id, instead of target ds name
+                uploaded_image_ids = upload_images(cli, images, managed_dir,
+                                                   target_dataset, remote_conn)
         else:
             images = objects
+
             print("Processing %s images" % len(images))
-            for image in images:
-                uploaded_image_ids += upload_image(cli, image, managed_dir,
-                                                   target_dataset, remote_conn)
+            uploaded_image_ids = upload_images(cli, images, managed_dir,
+                                               None, remote_conn)
     finally:
         close_remote_connection(c, cli, remote_conn)
     # End of transferring images
@@ -185,72 +184,100 @@ def close_remote_connection(c, cli, remote_conn):
     cli.close()
 
 
-def upload_image(cli, image, managed_dir, target_dataset,remote_conn):
-
-    print("Processing image: ID %s: %s" % (image.id, image.getName()))
-    uploaded_image_ids = []
+def upload_dataset(cli, ds, remote_conn):
     temp_file = NamedTemporaryFile().name
-    # TODO haven't tested an image with multiple files -see fileset.
-    for f in image.getImportedImageFiles():
-        file_loc = os.path.join(managed_dir, f.path, f.name)
-        print "file location is: ", file_loc
-        # This temp_file is a work around to get hold of the id of uploaded
-        # images from stdout.
-        with open(temp_file, 'wr') as tf, stdout_redirected(tf):
-            if target_dataset:
-                cli.onecmd(["import", file_loc, TARGET_FLAG, target_dataset])
-            else:
-                cli.onecmd(["import", file_loc])
+    # This temp_file is a work around to get hold of the id of uploaded
+    # datasets from stdout.
 
-        with open(temp_file, 'r') as tf:
-            txt = tf.readline()
-            # assert txt.startswith("Image:")
-            uploaded_image_ids.append(re.findall(r'\d+', txt)[0])
+    name_cmd = 'name=' + ds.getName()
+    desc_cmd = "description="+ ds.getDescription()
+    with open(temp_file, 'wr') as tf, stdout_redirected(tf):
+            # bin/omero obj new Dataset name='new_dataset'
+            cli.onecmd(["obj", "new", "Dataset", name_cmd, desc_cmd])
 
-    # TODO check what happens when an image has multiple files.
-    add_attachments(image, uploaded_image_ids[0], remote_conn)
+    with open(temp_file, 'r') as tf:
+        txt = tf.readline()
+        uploaded_dataset_id = re.findall(r'\d+', txt)[0]
+    print "uploaded dataset ", uploaded_dataset_id
+    remote_ds = remote_conn.getObject("Dataset", uploaded_dataset_id)
+    # TODO add description and tags for dataset
+    add_attachments(ds, remote_ds, remote_conn)
+    return uploaded_dataset_id
+
+
+def upload_images(cli, images, managed_dir, target_dataset,remote_conn):
+    uploaded_image_ids = []
+    uploaded_image_id = '';
+    for image in images:
+        print("Processing image: ID %s: %s" % (image.id, image.getName()))
+        desc = image.getDescription()
+        print "Description: ", desc
+        temp_file = NamedTemporaryFile().name
+        # TODO haven't tested an image with multiple files -see fileset.
+        for f in image.getImportedImageFiles():
+            file_loc = os.path.join(managed_dir, f.path, f.name)
+            # This temp_file is a work around to get hold of the id of uploaded
+            # images from stdout.
+            with open(temp_file, 'wr') as tf, stdout_redirected(tf):
+                if target_dataset:
+                    cli.onecmd(["import", file_loc, '-T', target_dataset,
+                                '--description', desc])
+                else:
+                    cli.onecmd(["import", file_loc, '--description', desc])
+
+            with open(temp_file, 'r') as tf:
+                txt = tf.readline()
+                # assert txt.startswith("Image:")
+                uploaded_image_id = re.findall(r'\d+', txt)[0]
+        uploaded_image_ids.append(uploaded_image_id)
+
+        # TODO check what happens when an image has multiple files.
+        remote_image = remote_conn.getObject("Image", uploaded_image_id)
+        add_attachments(image, remote_image, remote_conn)
 
     print "ids are: ", uploaded_image_ids
     return uploaded_image_ids
 
 
-def add_attachments(local_image, remote_image_id, remote_conn):
-    remote_image = remote_conn.getObject("Image", remote_image_id)
-    for ann in local_image.listAnnotations():
+def add_attachments(local_item, remote_item, remote_conn):
+    for ann in local_item.listAnnotations():
         if ann.OMERO_TYPE == omero.model.TagAnnotationI:
-            # Nothing to do here, tags are automatically uploaded.
-            pass
-        else:  # not a tag, add to image
-            if ann.OMERO_TYPE == omero.model.CommentAnnotationI:
-                remote_ann = omero.gateway.CommentAnnotationWrapper(remote_conn)
-                remote_ann.setValue(ann.getTextValue())
-            elif ann.OMERO_TYPE == omero.model.LongAnnotationI:  # rating
-                remote_ann = omero.gateway.LongAnnotationWrapper(remote_conn)
-                remote_ann.setNs(ann.getNs())
-                remote_ann.setValue(ann.getValue())
-            elif ann.OMERO_TYPE == omero.model.MapAnnotationI:
-                remote_ann = omero.gateway.MapAnnotationWrapper(remote_conn)
-                remote_ann.setNs(ann.getNs())
-                remote_ann.setValue(ann.getValue())
-            elif ann.OMERO_TYPE == omero.model.FileAnnotationI:
-                file_to_upload = ann.getFile()
-                file_path = os.path.join(file_to_upload.getPath(),
-                                         file_to_upload.getName())
-                mime = file_to_upload.getMimetype()
-                namespace = ann.getNs()
-                description = ann.getDescription()
-                remote_ann = remote_conn.createFileAnnfromLocalFile(
-                    file_path, mimetype=mime, ns=namespace, desc=description)
-                print "Attaching FileAnnotation to Image: ", "File ID:",\
-                    remote_ann.getId(),  ",", remote_ann.getFile().getName(), \
-                    "Size:", remote_ann.getFile().getSize()
-            else:
-                remote_ann = omero.gateway.CommentAnnotationWrapper(remote_conn)
-                comment = 'Annotation of type: {} could not be uploaded.'.\
-                    format(ann.OMERO_TYPE)
-                remote_ann.setValue(comment)
-            remote_ann.save()
-            remote_image.linkAnnotation(remote_ann)
+            # TODO something weird with the example that I got from Ivan's
+            # batch export. It uploads the tags with the image upload, and
+            # then this adds duplicate ones.
+            remote_ann = omero.gateway.TagAnnotationWrapper(remote_conn)
+            remote_ann.setValue(ann.getTextValue())
+        elif ann.OMERO_TYPE == omero.model.CommentAnnotationI:
+            remote_ann = omero.gateway.CommentAnnotationWrapper(remote_conn)
+            remote_ann.setValue(ann.getTextValue())
+        elif ann.OMERO_TYPE == omero.model.LongAnnotationI:  # rating
+            remote_ann = omero.gateway.LongAnnotationWrapper(remote_conn)
+            remote_ann.setNs(ann.getNs())
+            remote_ann.setValue(ann.getValue())
+        elif ann.OMERO_TYPE == omero.model.MapAnnotationI:
+            remote_ann = omero.gateway.MapAnnotationWrapper(remote_conn)
+            remote_ann.setNs(ann.getNs())
+            remote_ann.setValue(ann.getValue())
+        elif ann.OMERO_TYPE == omero.model.FileAnnotationI:
+            file_to_upload = ann.getFile()
+            file_path = os.path.join(file_to_upload.getPath(),
+                                     file_to_upload.getName())
+            mime = file_to_upload.getMimetype()
+            namespace = ann.getNs()
+            description = ann.getDescription()
+            remote_ann = remote_conn.createFileAnnfromLocalFile(
+                file_path, mimetype=mime, ns=namespace, desc=description)
+            # TODO this message would be better if it said if adding to image or dataset
+            print "Attaching FileAnnotation to Item: ", "File ID:",\
+                remote_ann.getId(),  ",", remote_ann.getFile().getName(), \
+                "Size:", remote_ann.getFile().getSize()
+        else:
+            remote_ann = omero.gateway.CommentAnnotationWrapper(remote_conn)
+            comment = 'Annotation of type: {} could not be uploaded.'.\
+                format(ann.OMERO_TYPE)
+            remote_ann.setValue(comment)
+        remote_ann.save()
+        remote_item.linkAnnotation(remote_ann)
 
 
 if __name__ == "__main__":
