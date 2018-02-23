@@ -240,13 +240,23 @@ def upload_images(cli, images, managed_dir, target_dataset,remote_conn):
 
 
 def add_attachments(local_item, remote_item, remote_conn):
+    # Sometimes the image already has the tags uploaded.
+    # Finding these so we can check for duplications.
+    pre_loaded_tags = []
+    for existing_ann in remote_item.listAnnotations():
+        if existing_ann.OMERO_TYPE == omero.model.TagAnnotationI:
+            print "Tag is already there: ", existing_ann.getTextValue()
+            pre_loaded_tags.append(existing_ann.getTextValue())
+
     for ann in local_item.listAnnotations():
+        remote_ann = None
         if ann.OMERO_TYPE == omero.model.TagAnnotationI:
-            # TODO something weird with the example that I got from Ivan's
-            # batch export. It uploads the tags with the image upload, and
+            # There's an example with data from a batch export.
+            # It uploads the tags with the image upload, and
             # then this adds duplicate ones.
-            remote_ann = omero.gateway.TagAnnotationWrapper(remote_conn)
-            remote_ann.setValue(ann.getTextValue())
+            if not ann.getTextValue() in pre_loaded_tags:
+                remote_ann = omero.gateway.TagAnnotationWrapper(remote_conn)
+                remote_ann.setValue(ann.getTextValue())
         elif ann.OMERO_TYPE == omero.model.CommentAnnotationI:
             remote_ann = omero.gateway.CommentAnnotationWrapper(remote_conn)
             remote_ann.setValue(ann.getTextValue())
@@ -276,8 +286,9 @@ def add_attachments(local_item, remote_item, remote_conn):
             comment = 'Annotation of type: {} could not be uploaded.'.\
                 format(ann.OMERO_TYPE)
             remote_ann.setValue(comment)
-        remote_ann.save()
-        remote_item.linkAnnotation(remote_ann)
+        if remote_ann:
+            remote_ann.save()
+            remote_item.linkAnnotation(remote_ann)
 
 
 if __name__ == "__main__":
