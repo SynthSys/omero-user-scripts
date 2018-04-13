@@ -20,6 +20,7 @@ import sys
 from tempfile import NamedTemporaryFile
 from contextlib import contextmanager
 import re
+import keyring
 
 # old_stdout = sys.stdout
 # temp_file = NamedTemporaryFile(delete=False)
@@ -78,7 +79,7 @@ def run_script():
     message = ""
     data_types = [rstring('Dataset'), rstring('Image')]
     client = scripts.client(
-        "Export_to_other_omero.py",
+        "Export_to_other_omero_keychain.py",
         "Script to export a file to another omero server.",
         scripts.String(
             "Data_Type", optional=False, values=data_types, default="Image",
@@ -86,9 +87,10 @@ def run_script():
         scripts.List("IDs", optional=False, grouping="1.2",
                      description="List of Dataset IDs or Image IDs").ofType(
             rlong(0)),
-        # Username
-        scripts.String("Username", optional=False, grouping="2.1"),
-        scripts.String("Password", optional=False, grouping="2.2")
+        # username
+        scripts.String("username", optional=False, grouping="2.1")  # ,
+        # password - getting from keyring, just for testing.
+        # scripts.String("password", optional=False, grouping="2.2")
     )
     try:
         # we can now create our local Blitz Gateway by wrapping the client.
@@ -112,8 +114,9 @@ def run_script():
 def copy_to_remote_omero(client, local_conn, script_params):
     # TODO could maybe refactor to remove client
     data_type = script_params["Data_Type"]
-    username = script_params["Username"]
-    password = script_params["Password"]
+    username = script_params["username"]
+    # password = client.getInput("password", unwrap=True)
+    password = keyring.get_password("omero", username)
     # The managed_dir is where the local images are stored.
     # TODO could pass this in instead of client?
     managed_dir = client.sf.getConfigService().getConfigValue(
@@ -162,6 +165,7 @@ def copy_to_remote_omero(client, local_conn, script_params):
     message += "uploaded image ids: " + str(tuple(uploaded_image_ids))
     print message
     return message
+
 
 def connect_to_remote(password, username):
     c = omero.client(host=REMOTE_HOST, port=REMOTE_PORT,
